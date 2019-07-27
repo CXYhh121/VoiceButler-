@@ -1,0 +1,6 @@
+查看当前目录:ls -l
+关闭防火墙:systemctl stop firewalld
+打开防火墙: systemctl start firewalld
+查看硬盘:df -h
+查看内存:free
+跑火车:sl
