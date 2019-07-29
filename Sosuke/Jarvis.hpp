@@ -1,6 +1,7 @@
 #ifndef __JARVIS_HPP__
 #define __JARVIS_HPP__
 #include <iostream>
+#include <pthread.h>
 #include <json/json.h>
 #include <unistd.h>
 #include <string>
@@ -10,6 +11,9 @@
 #include <unordered_map>
 #include <cstdio>
 #include <sstream>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <fstream>
 #include <stdlib.h>
 #include "speech.h"
@@ -17,10 +21,13 @@
 
 #define ASR_PATH "temp_file/asr.wav"
 #define CMD_PATH "command.etc"
-#define PLAY_PATH "temp_file/play.wav"
+#define PLAY_PATH "temp_file/play.mp3"
+#define DEBUG "debug.txt"
 
 //工具类
 class Util{
+    private:
+        static pthread_t id;
     public:
         static bool Exec(std::string command,bool is_print)
         {
@@ -35,14 +42,39 @@ class Util{
 
             if(is_print){
                 char ch;
-                while(fread(&ch,1,1,fp) < 0){
+                while(fread(&ch,1,1,fp) > 0){
                     fwrite(&ch,1,1,stdout);
                 }
             }
-                pclose(fp);
-                return true;
+            pclose(fp);
+            return true;
+        }
+        static void *ThreadRun(void * arg)
+        {
+            pthread_detach(pthread_self());
+            const char *tips = (char*)arg;
+            int i = 0;
+            char bar[53] = {0};
+            const char* lable = "|/-\\";
+            for(;i <= 50;i++){
+                printf("%s[%-51s][%d%%][%c]\r",tips,bar,i*2,lable[i%4]);
+                fflush(stdout);
+                bar[i] = '=';
+                bar[i+1] = '>';
+                usleep(49000*2);
+            }
+            printf("\n");
+        }
+        static void PrintStart(std::string tips)
+        {
+            pthread_create(&id,NULL,ThreadRun,(void*)tips.c_str());
+        }
+        static void PrintEnd()
+        {
+            pthread_cancel(id);
         }
 };
+pthread_t Util::id;
 
 //机器人类
 class Robot{
@@ -54,40 +86,30 @@ class Robot{
 
     private:
 
-        // bool IsCodeLegal(int code)
-        // {
-        //     switch(code){
-        //         case 5000:
-        //             std::cout << "无解析结果" << std::endl;
-        //             break;
-        //         case 6000:
-        //             std
-        //             break;
-        //         defult:
-        //             std::cout << "code error" << std::endl;
-        //     }
-        // }
-
-        bool IsCodeLegal(int code, std::string& err_msg)
-        {
-            std::unordered_map<int, std::string> err_reason = {
-                {5000, "无解析结果"}, 
-                {6000, "暂不支持该功能"}
-            };
-            auto it = err_reason.find(code);
-            if(it != err_reason.end()) {
-                err_msg = it->second;
-                return false;
-            }else{
-                return true;
-            }
-        }
+         bool IsCodeLegal(int code)
+         {
+             bool result = true;
+             switch(code){
+                 case 5000:
+                     result = false;
+                     break;
+                 case 6000:
+                     result = false;
+                     break;
+                 case 4000:
+                     result = false;
+                     break;
+                 default: 
+                     break;
+             }
+             return result;
+         }
         //将我们的信息转换为json串
         std::string MessageToJson(std::string& message)
         {
             Json::Value root;//可以看做是一个万能对象，什么类型的信息都可以存放在这个对象中，方便序列化
-            Json::StreamWriterBuilder swb;
-            std::ostringstream os;
+            Json::StreamWriterBuilder wb;
+            std::ostringstream ss;
 
             Json::Value item_;
             item_["text"] = message;
@@ -105,12 +127,12 @@ class Robot{
             root["userInfo"] = item; 
 
             //将new好的资源交给智能指针管理，以免忘记释放导致内存泄漏
-            std::unique_ptr<Json::StreamWriter> sw(swb.newStreamWriter());
-            //创建好的对象调用Write接口将root中的信息写入os中
-            sw->write(root,&os);
-            std::string jsonstring =  os.str();
-            // std::cout << "debug: " << jsonstring << std::endl;
-            return jsonstring;
+            std::unique_ptr<Json::StreamWriter> sw(wb.newStreamWriter());
+            //创建好的对象调用Write接口将root中的信息写入ss中
+            sw->write(root,&ss);
+            std::string json_string =  ss.str();
+            //std::cout << "debug: " << json_string << std::endl;
+            return json_string;
         }
         
         //向图灵机器人，发起http post请求
@@ -126,19 +148,20 @@ class Robot{
                 std::cerr << "http post request error!" << std::endl;
                 return "";
             }
+            //std::cout << "debug:"<< response << std::endl;
             return response;
         }
         
-
+        //将图灵机器人返回的json串转换为文本信息
         std::string JsonToEchoMessage(std::string& str)
         {
             //std::cout << "JsonToEchoMessage: " << str << std::endl;
             JSONCPP_STRING errs;
             Json::Value root;
-            Json::CharReaderBuilder crb;
+            Json::CharReaderBuilder rb;
 
             //将new好的资源交给智能指针管理，以免忘记释放导致内存泄漏
-            std::unique_ptr<Json::CharReader> const cr(crb.newCharReader());
+            std::unique_ptr<Json::CharReader> const cr(rb.newCharReader());
             
             //用创建好的cr对象调用parse接口解析response中的信息
             bool res = cr->parse(str.data(),str.data()+str.size(),&root,&errs);
@@ -148,15 +171,14 @@ class Robot{
             }
 
             int code = root["intent"]["code"].asInt();
-            std::string err_msg;
-            if(!IsCodeLegal(code,err_msg)){//返回码若是错误
-                std::cerr << "response code error" <<err_msg << std::endl;
+            if(!IsCodeLegal(code)){//返回码若是错误
+                std::cerr << "response code error" << std::endl;
                 return "";
             }
 
-            std::string echo_message;
-            echo_message = root["reslut"][0]["values"]["text"].asString();
-            return echo_message;
+            Json::Value item = root["results"][0];
+            std::string msg = item["values"]["text"].asString();
+            return msg;
         }
     public:
         Robot(std::string id = "1")
@@ -174,7 +196,6 @@ class Robot{
             std::string response_json = PostRequest(request_json);
             //将http响应回来的信息转换为文本信息
             std::string echo_message = JsonToEchoMessage(response_json);
-
             //std::cout << echo_message << std::endl;
             return echo_message;
         }
@@ -193,16 +214,15 @@ class SpeechRec{
     private: 
         bool IsCodeLegal(int code, std::string& err_msg)
         {
-            bool result = true;
+            bool result = false;
             switch(code){
                 case 0:
+                    result = true;
                     break;
                 case 3300:
-                    result = false;
                     err_msg = "用户输入错误";
                     break;
                 defalut:
-                    result = false; 
                     std::cerr << "code error..." << std::endl;
                     break;
             }
@@ -223,11 +243,12 @@ class SpeechRec{
             std::map<std::string,std::string> options;
             options["dev_pid"] = "1536";
             std::string file_content;
-            aip::get_file_content("ASR_PATH",&file_content);
+            aip::get_file_content(ASR_PATH,&file_content);
 
             //Speech创建的客户端对象调用语音识别接口recognize识别语音信息
             Json::Value result = client->recognize(file_content,"wav",16000,options);
-            std::cout << "debug: " << result.toStyledString() << std::endl;
+            
+            //std::cout << "debug: " << result.toStyledString() << std::endl;
             
             int code = result["err_no"].asInt();
             std::string err_msg;
@@ -244,21 +265,28 @@ class SpeechRec{
         //将图灵机器人返回的消息转换为语音消息
         bool Text2Speech(std::string message)
         {
+            bool ret;
             std::ofstream ofile;
-            std::string file_ret;
+            std::string ret_file;
             std::map<std::string, std::string> options;
-            options["spd"] = "6";//语速
-            options["per"] = "6";//语音类别
+            options["spd"] = "6";//语速0~15
+            options["pit"] = "5";//音调0~15
+            options["vol"] = "15";//音量0~15
+            options["per"] = "1";//语音类别1,0,3,4,106,110,111
             ofile.open(PLAY_PATH, std::ios::out | std::ios::binary);
+
             //语音合成，将文本转成语音，放到指定目录，形成指定文件
-            Json::Value result = client->text2audio(message, options, file_ret);
-            if(!file_ret.empty()){
-                ofile << file_ret;
+            Json::Value result = client->text2audio(message, options, ret_file);
+            if(!ret_file.empty()){
+                ofile << ret_file;
+                ret = true;
             }
             else{
                 std::cout << "error: " << result.toStyledString() << std::endl;
+                ret = false;
             }
             ofile.close();
+            return ret;
         }
         ~SpeechRec()
         {}
@@ -282,25 +310,29 @@ class Jarvis{
             std::cout <<"debug:Record done...." << std::endl;
             return ret;
         }
+
         //播放机器人语音
         bool Aplay()
         {
-            std::string cmd = "cvlc --play-and-exit "; //Exit after playing.
-            cmd += PLAY_PATH;
-            if(!Util::Exec(cmd, false))
+            std::string command = "cvlc --play-and-exit "; //Exit after playing.
+            command += PLAY_PATH;
+            if(!Util::Exec(command, false))
             {
-                std::cerr << __TIME__ << " Play audio error." << std::endl;
+                std::cerr<< " Play audio error." << std::endl;
                 return false;
             }
             return true;
         }
-        bool IsCommand(const std::string& rec_msg, std::string& cmd)
+
+        //判断message是否是命令，是则返回该命令的执行语句
+        //eg：查看当前目录:ls -l
+        bool IsCommand(std::string& message, std::string& cmd)
         {
-            auto it = commands.find(rec_msg);
-            if(it == commands.end())
+            auto iter = commands.find(message);
+            if(iter == commands.end())
                 return false;
             else{
-                cmd = it->second;
+                cmd = iter->second;
                 return true;
             }
         }
@@ -327,52 +359,68 @@ class Jarvis{
                 }
                 std::string key = str.substr(0,pos);
                 std::string value = str.substr(pos+sep.size());
-
-                //commands.insert(std::make_pair<key,value>);
+                key += "。";
+                //commands.insert(std::make_pair(key,value));
                 commands.insert({key,value});
             }
-            std::cout << "Load command etc done....success" << std::endl;
+            std::cerr << "Load command etc done.... success" << std::endl;
 
             in.close();
             return true;    
         }
 
+        //核心逻辑执行
         void Run()
         {
+#ifdef _DEBUG_
+            int fd = open("DEBUG",O_WRONLY|O_CREAT,0644);
+            dup2(fd,2);
+#endif
             volatile bool quit = false;
             while(!quit){
+                std::string tips = "Record....";
+                Util::PrintStart(tips);
                 if(this->Record()){
                     std::string message;
                     if(sr.Speech2Text(ASR_PATH,message)){
-                        if(message == "退出"){
-                            std::cout << "我走了，不要想我哦" <<std::endl;
-                            quit = true;
-                            continue;
-                        }
-                        std::string rec_msg;
+                        std::string cmd = "";
                         //1.判断是否是命令，是则执行
-                        if(IsCommand(rec_msg,message)){
-                            std::cout << "[cxyhh121@lcalhost]$ " << message << std::endl;
-                            Util::Exec(commands[message],true);
+                        if(IsCommand(message,cmd)){
+                            std::cout << "[Sosuke@lcalhost]$ " << cmd << std::endl;
+                            Util::Exec(cmd,true);
+                            continue;
                         }else{
+                            // std::cout << "我# " << message <<std::endl;
+                            if(message == "你走吧。"){
+                                std::cout << "我# " << message <<std::endl;
+                                std::string quit_message =  "我走了，不要想我哦";
+                                std::cout << "Sosuke# " << quit_message << std::endl;
+                                if(sr.Text2Speech(quit_message)){   //如果语音合成成功
+                                    this->Aplay();
+                                }
+                                exit(0);
+                            }
                             //2.识别不是命令，交给图灵机器人
                             std::cout << "我# " << message << std::endl;
                             std::string echo = rt.Talk(message);
                             std::cout << "Sosuke# " << echo << std::endl;
-                            //调用播放音频函数播放机器人消息
-                            Aplay();
+                            if(sr.Text2Speech(echo)){   //如果语音合成成功
+                                //调用播放音频函数播放机器人消息
+                                this->Aplay();
+                            }
                         }
                     }else{
                         std::cerr << "Recognize error.." << std::endl;
                     }
-
                 }
                 else{
                     std::cerr << "Record error...." << std::endl;
                 }
-                sleep(2);
+                Util::PrintEnd();
             }
-
+#ifndef _DEBUG_
+            close(fd);
+#endif
         }
         ~Jarvis();
 
