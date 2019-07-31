@@ -1,5 +1,5 @@
-#ifndef __JARVIS_HPP__
-#define __JARVIS_HPP__
+#ifndef __SOSUKE_HPP__
+#define __SOSUKE_HPP__
 #include <iostream>
 #include <pthread.h>
 #include <json/json.h>
@@ -269,10 +269,10 @@ class SpeechRec{
             std::ofstream ofile;
             std::string ret_file;
             std::map<std::string, std::string> options;
-            options["spd"] = "3";//语速0~15
+            options["spd"] = "6";//语速0~15
             options["pit"] = "5";//音调0~15
             options["vol"] = "15";//音量0~15
-            options["per"] = "111";//语音类别1,0,3,4,106,110,111
+            options["per"] = "1";//语音类别1,0,3,4,106,110,111
             ofile.open(PLAY_PATH, std::ios::out | std::ios::binary);
 
             //语音合成，将文本转成语音，放到指定目录，形成指定文件
@@ -294,7 +294,7 @@ class SpeechRec{
 
 
 //核心逻辑实现类
-class Jarvis{
+class Sosuke{
     private:
         Robot rt;
         SpeechRec sr;
@@ -303,11 +303,11 @@ class Jarvis{
         //录音接口
         bool Record()
         {
-            //std::cout << "debug:Record....." << std::endl;
+            std::cout << "debug:Record....." << std::endl;
             std::string command = "arecord -t wav -c 1 -r 16000 -d 5 -f S16_LE ";
             command += ASR_PATH;
             bool ret = Util::Exec(command,false);
-            //std::cout <<"debug:Record done...." << std::endl;
+            std::cout <<"debug:Record done...." << std::endl;
             return ret;
         }
 
@@ -337,7 +337,7 @@ class Jarvis{
             }
         }
     public:
-        Jarvis()
+        Sosuke()
         {}
         
         //加载命令配置文件
@@ -422,7 +422,7 @@ class Jarvis{
             close(fd);
 #endif
         }
-        ~Jarvis();
+        ~Sosuke();
 
 };
 

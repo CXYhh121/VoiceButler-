@@ -1,6 +1,6 @@
 CC=g++
-bin=Jarvis
-src=Jarvis.cc
+bin=Sosuke
+src=Sosuke.cc
 INCLUDE=-Ispeech/
 LIB=-ljsoncpp -lcurl -lcrypto -lpthread
 FLAGS=-D_DEBUG_
